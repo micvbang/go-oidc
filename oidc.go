@@ -89,12 +89,34 @@ type providerJSON struct {
 	UserInfoURL string `json:"userinfo_endpoint"`
 }
 
+var (
+	defaultIssuerWellKnown = func(issuer string) string {
+		return strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
+	}
+)
+
+var IssuerMatches func(issuer string) bool
+
+type ProviderConfig struct {
+	IssuerWellKnown func(issuer string) string
+	IssuerMatches   func(issuer string) bool
+}
+
 // NewProvider uses the OpenID Connect discovery mechanism to construct a Provider.
 //
 // The issuer is the URL identifier for the service. For example: "https://accounts.google.com"
 // or "https://login.salesforce.com".
-func NewProvider(ctx context.Context, issuer string) (*Provider, error) {
-	wellKnown := strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
+func NewProvider(ctx context.Context, issuer string, config *ProviderConfig) (*Provider, error) {
+	if config == nil {
+		config = &ProviderConfig{
+			IssuerWellKnown: defaultIssuerWellKnown,
+		}
+	}
+	if config.IssuerWellKnown == nil {
+		config.IssuerWellKnown = defaultIssuerWellKnown
+	}
+
+	wellKnown := config.IssuerWellKnown(issuer)
 	req, err := http.NewRequest("GET", wellKnown, nil)
 	if err != nil {
 		return nil, err
@@ -120,7 +142,7 @@ func NewProvider(ctx context.Context, issuer string) (*Provider, error) {
 		return nil, fmt.Errorf("oidc: failed to decode provider discovery object: %v", err)
 	}
 
-	if p.Issuer != issuer {
+	if (config.IssuerMatches == nil && p.Issuer != issuer) || !config.IssuerMatches(p.Issuer) {
 		return nil, fmt.Errorf("oidc: issuer did not match the issuer returned by provider, expected %q got %q", issuer, p.Issuer)
 	}
 	return &Provider{
